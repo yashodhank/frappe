@@ -2,6 +2,7 @@
 # MIT License. See license.txt
 
 from __future__ import unicode_literals
+
 import frappe
 from frappe.utils import time_diff_in_seconds, now, now_datetime, DATETIME_FORMAT
 from dateutil.relativedelta import relativedelta
@@ -26,7 +27,6 @@ def get_notifications():
 		"open_count_module": get_notifications_for_modules(config, notification_count),
 		"open_count_other": get_notifications_for_other(config, notification_count),
 		"new_messages": get_new_messages()
-		# "likes": get_count_of_new_likes()
 	}
 
 def get_new_messages():
@@ -41,11 +41,12 @@ def get_new_messages():
 		# no update for 30 mins, consider only the last 30 mins
 		last_update = (now_datetime() - relativedelta(seconds=1800)).strftime(DATETIME_FORMAT)
 
-	return frappe.db.sql("""select comment_by_fullname, comment
-		from tabComment
-			where comment_doctype='Message'
-			and comment_docname = %s
-			and ifnull(creation, "2000-01-01") > %s
+	return frappe.db.sql("""select sender_full_name, content
+		from `tabCommunication`
+			where communication_type in ('Chat', 'Notification')
+			and reference_doctype='user'
+			and reference_name = %s
+			and creation > %s
 			order by creation desc""", (frappe.session.user, last_update), as_dict=1)
 
 def get_notifications_for_modules(config, notification_count):
@@ -68,7 +69,8 @@ def get_notifications_for(notification_type, config, notification_count):
 
 				frappe.cache().hset("notification_count:" + m, frappe.session.user, open_count[m])
 		except frappe.PermissionError:
-			frappe.msgprint("Permission Error in notifications for {0}".format(m))
+			pass
+			# frappe.msgprint("Permission Error in notifications for {0}".format(m))
 
 	return open_count
 
@@ -86,13 +88,14 @@ def get_notifications_for_doctypes(config, notification_count):
 			else:
 				try:
 					if isinstance(condition, dict):
-						result = frappe.get_list(d, fields=["count(*)"],
-							filters=condition, as_list=True)[0][0]
+						result = len(frappe.get_list(d, fields=["name"],
+							filters=condition, limit_page_length = 21, as_list=True, ignore_ifnull=True))
 					else:
 						result = frappe.get_attr(condition)()
 
 				except frappe.PermissionError:
-					frappe.msgprint("Permission Error in notifications for {0}".format(d))
+					pass
+					# frappe.msgprint("Permission Error in notifications for {0}".format(d))
 
 				except Exception, e:
 					# OperationalError: (1412, 'Table definition has changed, please retry transaction')
@@ -159,3 +162,59 @@ def get_notification_config():
 		return config
 
 	return frappe.cache().get_value("notification_config", _get)
+
+def get_filters_for(doctype):
+	'''get open filters for doctype'''
+	config = get_notification_config()
+	return config.get('for_doctype').get(doctype, {})
+
+@frappe.whitelist()
+def get_open_count(doctype, name):
+	'''Get open count for given transactions and filters
+
+	:param doctype: Reference DocType
+	:param name: Reference Name
+	:param transactions: List of transactions (json/dict)
+	:param filters: optional filters (json/list)'''
+
+	frappe.has_permission(doc=frappe.get_doc(doctype, name), throw=True)
+
+	meta = frappe.get_meta(doctype)
+	links = meta.get_dashboard_data()
+
+	# compile all items in a list
+	items = []
+	for group in links.transactions:
+		items.extend(group.get('items'))
+
+	out = []
+	for d in items:
+		if d in links.get('internal_links', {}):
+			# internal link
+			continue
+
+		filters = get_filters_for(d)
+		fieldname = links.get('non_standard_fieldnames', {}).get(d, links.fieldname)
+		data = {'name': d}
+		if filters:
+			# get the fieldname for the current document
+			# we only need open documents related to the current document
+			filters[fieldname] = name
+			total = len(frappe.get_all(d, fields='name',
+				filters=filters, limit=6, distinct=True, ignore_ifnull=True))
+			data['open_count'] = total
+
+		total = len(frappe.get_all(d, fields='name',
+			filters={fieldname: name}, limit=10, distinct=True, ignore_ifnull=True))
+		data['count'] = total
+		out.append(data)
+
+	out = {
+		'count': out,
+	}
+
+	module = frappe.get_meta_module(doctype)
+	if hasattr(module, 'get_timeline_data'):
+		out['timeline_data'] = module.get_timeline_data(doctype, name)
+
+	return out

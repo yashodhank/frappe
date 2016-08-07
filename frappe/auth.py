@@ -8,10 +8,13 @@ from frappe import _
 import frappe
 import frappe.database
 import frappe.utils
+from frappe.utils import cint
 import frappe.utils.user
 from frappe import conf
 from frappe.sessions import Session, clear_sessions, delete_session
 from frappe.modules.patch_handler import check_session_stopped
+from frappe.translate import get_lang_code
+from frappe.utils.password import check_password
 
 from urllib import quote
 
@@ -43,6 +46,11 @@ class HTTPRequest:
 		# login
 		frappe.local.login_manager = LoginManager()
 
+		if frappe.form_dict._lang:
+			lang = get_lang_code(frappe.form_dict._lang)
+			if lang:
+				frappe.local.lang = lang
+
 		self.validate_csrf_token()
 
 		# write out latest cookies
@@ -57,7 +65,9 @@ class HTTPRequest:
 
 	def validate_csrf_token(self):
 		if frappe.local.request and frappe.local.request.method=="POST":
-			if not frappe.local.session.data.csrf_token or frappe.local.session.data.device=="mobile":
+			if not frappe.local.session.data.csrf_token \
+				or frappe.local.session.data.device=="mobile" \
+				or frappe.conf.get('ignore_csrf', None):
 				# not via boot
 				return
 
@@ -130,10 +140,12 @@ class LoginManager:
 			frappe.local.cookie_manager.set_cookie("system_user", "no")
 			if not resume:
 				frappe.local.response["message"] = "No App"
+				frappe.local.response["home_page"] = get_website_user_home_page(self.user)
 		else:
 			frappe.local.cookie_manager.set_cookie("system_user", "yes")
 			if not resume:
 				frappe.local.response['message'] = 'Logged In'
+				frappe.local.response["home_page"] = "/desk"
 
 		if not resume:
 			frappe.response["full_name"] = self.full_name
@@ -153,7 +165,8 @@ class LoginManager:
 		self.clear_active_sessions()
 
 	def clear_active_sessions(self):
-		if not frappe.conf.get("deny_multiple_sessions"):
+		"""Clear other sessions of the current user if `deny_multiple_sessions` is not set"""
+		if not (frappe.conf.get("deny_multiple_sessions") or cint(frappe.db.get_system_setting('deny_multiple_sessions'))):
 			return
 
 		if frappe.session.user != "Guest":
@@ -170,19 +183,17 @@ class LoginManager:
 
 	def check_if_enabled(self, user):
 		"""raise exception if user not enabled"""
-		from frappe.utils import cint
 		if user=='Administrator': return
 		if not cint(frappe.db.get_value('User', user, 'enabled')):
 			self.fail('User disabled or missing')
 
 	def check_password(self, user, pwd):
 		"""check password"""
-		user = frappe.db.sql("""select `user` from __Auth where `user`=%s
-			and `password`=password(%s)""", (user, pwd))
-		if not user:
+		try:
+			# returns user in correct case
+			return check_password(user, pwd)
+		except frappe.AuthenticationError:
 			self.fail('Incorrect password')
-		else:
-			return user[0][0] # in correct case
 
 	def fail(self, message):
 		frappe.local.response['message'] = message
@@ -279,12 +290,6 @@ class CookieManager:
 		for key in set(self.to_delete):
 			response.set_cookie(key, "", expires=expires)
 
-def _update_password(user, password):
-	frappe.db.sql("""insert into __Auth (user, `password`)
-		values (%s, password(%s))
-		on duplicate key update `password`=password(%s)""", (user,
-		password, password))
-
 @frappe.whitelist()
 def get_logged_user():
 	return frappe.session.user
@@ -293,3 +298,11 @@ def clear_cookies():
 	if hasattr(frappe.local, "session"):
 		frappe.session.sid = ""
 	frappe.local.cookie_manager.delete_cookie(["full_name", "user_id", "sid", "user_image", "system_user"])
+
+def get_website_user_home_page(user):
+	home_page_method = frappe.get_hooks('get_website_user_home_page')
+	if home_page_method:
+		home_page = frappe.get_attr(home_page_method[-1])(user)
+		return '/' + home_page.strip('/')
+	else:
+		return '/me'

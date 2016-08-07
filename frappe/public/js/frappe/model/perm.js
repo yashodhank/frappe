@@ -75,7 +75,7 @@ $.extend(frappe.perm, {
 			}
 
 			// apply permissions from shared
-			if(docinfo.shared) {
+			if(docinfo && docinfo.shared) {
 				for(var i=0; i<docinfo.shared.length; i++) {
 					var s = docinfo.shared[i];
 					if(s.user===user) {
@@ -86,8 +86,8 @@ $.extend(frappe.perm, {
 						if(s.read) {
 							// also give print, email permissions if read
 							// and these permissions exist at level [0]
-							perm[0].email = meta.permissions[0].email;
-							perm[0].print = meta.permissions[0].print;
+							perm[0].email = frappe.boot.user.can_email.indexOf(doctype)!==-1 ? 1 : 0;
+							perm[0].print = frappe.boot.user.can_print.indexOf(doctype)!==-1 ? 1 : 0;
 						}
 					}
 				}
@@ -256,7 +256,7 @@ $.extend(frappe.perm, {
 
 	get_field_display_status: function(df, doc, perm, explain) {
 		if(!doc) {
-			return (df && cint(df.hidden)) ? "None": "Write";
+			return (df && (cint(df.hidden) || cint(df.hidden_due_to_dependency))) ? "None": "Write";
 		}
 
 		perm = perm || frappe.perm.get_perm(doc.doctype, doc);

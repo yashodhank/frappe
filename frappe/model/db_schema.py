@@ -46,10 +46,11 @@ type_map = {
 
 default_columns = ['name', 'creation', 'modified', 'modified_by', 'owner',
 	'docstatus', 'parent', 'parentfield', 'parenttype', 'idx']
+optional_columns = ["_user_tags", "_comments", "_assign", "_liked_by"]
 
 default_shortcuts = ['_Login', '__user', '_Full Name', 'Today', '__today', "now", "Now"]
 
-def updatedb(dt):
+def updatedb(dt, meta=None):
 	"""
 	Syncs a `DocType` to the table
 	   * creates if required
@@ -61,7 +62,7 @@ def updatedb(dt):
 		raise Exception, 'Wrong doctype "%s" in updatedb' % dt
 
 	if not res[0][0]:
-		tab = DbTable(dt, 'tab')
+		tab = DbTable(dt, 'tab', meta)
 		tab.validate()
 
 		frappe.db.commit()
@@ -69,11 +70,15 @@ def updatedb(dt):
 		frappe.db.begin()
 
 class DbTable:
-	def __init__(self, doctype, prefix = 'tab'):
+	def __init__(self, doctype, prefix = 'tab', meta = None):
 		self.doctype = doctype
 		self.name = prefix + doctype
 		self.columns = {}
 		self.current_columns = {}
+
+		self.meta = meta
+		if not self.meta:
+			self.meta = frappe.get_meta(self.doctype)
 
 		# lists for change
 		self.add_column = []
@@ -185,7 +190,7 @@ class DbTable:
 	def get_index_definitions(self):
 		ret = []
 		for key, col in self.columns.items():
-			if col.set_index and col.fieldtype in type_map and \
+			if col.set_index and not col.unique and col.fieldtype in type_map and \
 					type_map.get(col.fieldtype)[0] not in ('text', 'longtext'):
 				ret.append('index `' + key + '`(`' + key + '`)')
 		return ret
@@ -198,6 +203,21 @@ class DbTable:
 		lengths = {}
 		precisions = {}
 		uniques = {}
+
+		# optional fields like _comments
+		if not self.meta.istable:
+			for fieldname in optional_columns:
+				fl.append({
+					"fieldname": fieldname,
+					"fieldtype": "Text"
+				})
+
+			# add _seen column if track_seen
+			if getattr(self.meta, 'track_seen', False):
+				fl.append({
+					'fieldname': '_seen',
+					'fieldtype': 'Text'
+				})
 
 		if not frappe.flags.in_install_db and frappe.flags.in_install != "frappe":
 			custom_fl = frappe.db.sql("""\
@@ -439,6 +459,8 @@ class DbManager:
  		if db:
  			self.db = db
 
+	def get_current_host(self):
+		return self.db.sql("select user()")[0][0].split('@')[1]
 
 	def get_variables(self,regex):
 		"""
@@ -460,8 +482,11 @@ class DbManager:
 
 		return [t[0] for t in self.db.sql("SHOW TABLES")]
 
-	def create_user(self, user, password, host):
+	def create_user(self, user, password, host=None):
 		#Create user if it doesn't exist.
+		if not host:
+			host = self.get_current_host()
+
 		try:
 			if password:
 				self.db.sql("CREATE USER '%s'@'%s' IDENTIFIED BY '%s';" % (user[:16], host, password))
@@ -470,8 +495,9 @@ class DbManager:
 		except Exception:
 			raise
 
-	def delete_user(self, target, host):
-	# delete user if exists
+	def delete_user(self, target, host=None):
+		if not host:
+			host = self.get_current_host()
 		try:
 			self.db.sql("DROP USER '%s'@'%s';" % (target, host))
 		except Exception, e:
@@ -484,15 +510,21 @@ class DbManager:
 		if target in self.get_database_list():
 			self.drop_database(target)
 
-		self.db.sql("CREATE DATABASE IF NOT EXISTS `%s` ;" % target)
+		self.db.sql("CREATE DATABASE `%s` ;" % target)
 
 	def drop_database(self,target):
 		self.db.sql("DROP DATABASE IF EXISTS `%s`;"%target)
 
-	def grant_all_privileges(self, target, user, host):
+	def grant_all_privileges(self, target, user, host=None):
+		if not host:
+			host = self.get_current_host()
+
 		self.db.sql("GRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'%s';" % (target, user, host))
 
-	def grant_select_privilges(self, db, table, user, host):
+	def grant_select_privilges(self, db, table, user, host=None):
+		if not host:
+			host = self.get_current_host()
+
 		if table:
 			self.db.sql("GRANT SELECT ON %s.%s to '%s'@'%s';" % (db, table, user, host))
 		else:
@@ -555,7 +587,7 @@ def get_definition(fieldtype, precision=None, length=None):
 
 	if size:
 		if fieldtype in ["Float", "Currency", "Percent"] and cint(precision) > 6:
-			size = '18,9'
+			size = '21,9'
 
 		if coltype == "varchar" and length:
 			size = length
@@ -566,6 +598,10 @@ def get_definition(fieldtype, precision=None, length=None):
 	return coltype
 
 def add_column(doctype, column_name, fieldtype, precision=None):
+	if column_name in frappe.db.get_table_columns(doctype):
+		# already exists
+		return
+
 	frappe.db.commit()
 	frappe.db.sql("alter table `tab%s` add column %s %s" % (doctype,
 		column_name, get_definition(fieldtype, precision)))

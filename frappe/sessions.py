@@ -17,7 +17,6 @@ import frappe.defaults
 import frappe.translate
 from frappe.utils.change_log import get_change_log
 import redis
-import os
 from urllib import unquote
 
 @frappe.whitelist()
@@ -32,7 +31,7 @@ def clear_cache(user=None):
 	cache = frappe.cache()
 
 	groups = ("bootinfo", "user_recent", "user_roles", "user_doc", "lang",
-		"defaults", "user_permissions", "roles", "home_page", "linked_with")
+		"defaults", "user_permissions", "roles", "home_page", "linked_with", "desktop_icons")
 
 	if user:
 		for name in groups:
@@ -48,7 +47,7 @@ def clear_cache(user=None):
 def clear_global_cache():
 	frappe.model.meta.clear_cache()
 	frappe.cache().delete_value(["app_hooks", "installed_apps",
-		"app_modules", "module_app", "time_zone", "notification_config"])
+		"app_modules", "module_app", "notification_config", 'system_settings'])
 	frappe.setup_module_map()
 
 def clear_sessions(user=None, keep_current=False, device=None):
@@ -91,6 +90,7 @@ def get():
 	from frappe.desk.notifications import \
 		get_notification_info_for_boot, get_notifications
 	from frappe.boot import get_bootinfo
+	from frappe.limits import get_limits, get_expiry_message
 
 	bootinfo = None
 	if not getattr(frappe.conf,'disable_session_cache', None):
@@ -128,8 +128,11 @@ def get():
 		frappe.get_attr(hook)(bootinfo=bootinfo)
 
 	bootinfo["lang"] = frappe.translate.get_user_lang()
-	bootinfo["dev_server"] = os.environ.get('DEV_SERVER', False)
 	bootinfo["disable_async"] = frappe.conf.disable_async
+
+	# limits
+	bootinfo.limits = get_limits()
+	bootinfo.expiry_message = get_expiry_message()
 
 	return bootinfo
 

@@ -17,59 +17,10 @@ END_LINE = '<!-- frappe: end-file -->'
 TASK_LOG_MAX_AGE = 86400  # 1 day in seconds
 redis_server = None
 
-def handler(f):
-	cmd = f.__module__ + '.' + f.__name__
-
-	def run(args, set_in_response=True, hijack_std=False):
-		from frappe.tasks import run_async_task
-		from frappe.handler import execute_cmd
-		if frappe.conf.disable_async:
-			return execute_cmd(cmd, from_async=True)
-		args = frappe._dict(args)
-		task = run_async_task.delay(site=frappe.local.site,
-			user=(frappe.session and frappe.session.user) or 'Administrator', cmd=cmd,
-									form_dict=args, hijack_std=hijack_std)
-		if set_in_response:
-			frappe.local.response['task_id'] = task.id
-		return task.id
-
-	@wraps(f)
-	def queue(*args, **kwargs):
-		task_id = run(frappe.local.form_dict, set_in_response=True)
-		return {
-			"status": "queued",
-			"task_id": task_id
-		}
-
-	queue.async = True
-	queue.queue = f
-	queue.run = run
-	frappe.whitelisted.append(f)
-	frappe.whitelisted.append(queue)
-	return queue
-
-
 @frappe.whitelist()
 def get_pending_tasks_for_doc(doctype, docname):
 	return frappe.db.sql_list("select name from `tabAsync Task` where status in ('Queued', 'Running') and reference_doctype=%s and reference_name=%s", (doctype, docname))
 
-
-@handler
-def ping():
-	from time import sleep
-	sleep(1)
-	return "pong"
-
-@frappe.whitelist()
-def get_task_status(task_id):
-	from frappe.celery_app import get_celery
-	c = get_celery()
-	a = c.AsyncResult(task_id)
-	frappe.local.response['response'] = a.result
-	return {
-		"state": a.state,
-		"progress": 0
-	}
 
 def set_task_status(task_id, status, response=None):
 	if not response:
@@ -96,8 +47,13 @@ def remove_old_task_logs():
 def is_file_old(file_path):
 	return ((time.time() - os.stat(file_path).st_mtime) > TASK_LOG_MAX_AGE)
 
+def publish_progress(percent, title=None, doctype=None, docname=None):
+	publish_realtime('progress', {'percent': percent, 'title': title},
+		user=frappe.session.user, doctype=doctype, docname=docname)
 
-def publish_realtime(event=None, message=None, room=None, user=None, doctype=None, docname=None, after_commit=False):
+def publish_realtime(event=None, message=None, room=None,
+	user=None, doctype=None, docname=None, task_id=None,
+	after_commit=False):
 	"""Publish real-time updates
 
 	:param event: Event name, like `task_progress` etc. that will be handled by the client (default is `task_progress` if within task or `global`)
@@ -116,11 +72,17 @@ def publish_realtime(event=None, message=None, room=None, user=None, doctype=Non
 		else:
 			event = "global"
 
+	if event=='msgprint' and not user:
+		user = frappe.session.user
+
 	if not room:
-		if getattr(frappe.local, "task_id", None):
-			room = get_task_progress_room()
+		if not task_id and hasattr(frappe.local, "task_id"):
+			task_id = frappe.local.task_id
+
+		if task_id:
+			room = get_task_progress_room(task_id)
 			if not "task_id" in message:
-				message["task_id"] = frappe.local.task_id
+				message["task_id"] = task_id
 
 			after_commit = False
 		elif user:
@@ -153,7 +115,7 @@ def put_log(line_no, line, task_id=None):
 	r = get_redis_server()
 	if not task_id:
 		task_id = frappe.local.task_id
-	task_progress_room = get_task_progress_room()
+	task_progress_room = get_task_progress_room(task_id)
 	task_log_key = "task_log:" + task_id
 	publish_realtime('task_progress', {
 		"message": {
@@ -166,11 +128,12 @@ def put_log(line_no, line, task_id=None):
 
 
 def get_redis_server():
-	"""Returns memcache connection."""
+	"""returns redis_socketio connection."""
 	global redis_server
 	if not redis_server:
 		from redis import Redis
-		redis_server = Redis.from_url(conf.get("async_redis_server") or "redis://localhost:12311")
+		redis_server = Redis.from_url(conf.get("redis_socketio")
+			or "redis://localhost:12311")
 	return redis_server
 
 
@@ -225,5 +188,5 @@ def get_user_room(user):
 def get_site_room():
 	return ''.join([frappe.local.site, ':all'])
 
-def get_task_progress_room():
-	return "task_progress:" + frappe.local.task_id
+def get_task_progress_room(task_id):
+	return "".join([frappe.local.site, ":task_progress:", task_id])

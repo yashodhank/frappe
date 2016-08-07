@@ -19,6 +19,8 @@ frappe.ui.make_app_page = function(opts) {
 	return opts.parent.page;
 }
 
+frappe.ui.pages = {};
+
 frappe.ui.Page = Class.extend({
 	init: function(opts) {
 		$.extend(this, opts);
@@ -29,7 +31,7 @@ frappe.ui.Page = Class.extend({
 		this.views = {};
 
 		this.make();
-
+		frappe.ui.pages[frappe.get_route_str()] = this;
 	},
 
 	make: function() {
@@ -53,6 +55,9 @@ frappe.ui.Page = Class.extend({
 					<div class="layout-footer hide"></div>\
 				</div>\
 			</div>');
+			// this.wrapper.find('.page-title')
+			// 	.removeClass('col-md-7').addClass('col-md-offset-2 col-md-5')
+			// 	.css({'padding-left': '45px'});
 		}
 
 		this.$title_area = this.wrapper.find("h1");
@@ -87,7 +92,6 @@ frappe.ui.Page = Class.extend({
 		this.page_form = $('<div class="page-form row hide"></div>').prependTo(this.main);
 		this.inner_toolbar = $('<div class="form-inner-toolbar hide"></div>').prependTo(this.main);
 		this.icon_group = this.page_actions.find(".page-icon-group");
-
 	},
 
 	set_indicator: function(label, color) {
@@ -129,6 +133,8 @@ frappe.ui.Page = Class.extend({
 			icon: icon,
 			working_label: working_label
 		});
+
+		return this.btn_primary;
 	},
 
 	set_secondary_action: function(label, click, icon, working_label) {
@@ -138,6 +144,8 @@ frappe.ui.Page = Class.extend({
 			icon: icon,
 			working_label: working_label
 		});
+
+		return this.btn_secondary;
 	},
 
 	clear_action_of: function(btn) {
@@ -227,9 +235,33 @@ frappe.ui.Page = Class.extend({
 		return $('<li class="divider"></li>').appendTo(this.menu);
 	},
 
-	add_inner_button: function(label, action) {
-		return $('<button class="btn btn-default btn-xs" style="margin-left: 10px;">'+__(label)+'</btn>')
-			.on("click", action).appendTo(this.inner_toolbar.removeClass("hide"))
+	get_inner_group_button: function(label) {
+		var $group = this.inner_toolbar.find('.btn-group[data-label="'+label+'"]');
+		if(!$group.length) {
+			$group = $('<div class="btn-group" data-label="'+label+'" style="margin-left: 10px;">\
+				<button type="button" class="btn btn-default dropdown-toggle btn-xs" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">\
+				'+label+' <span class="caret"></span></button>\
+				<ul class="dropdown-menu" style="margin-top: -8px;"></ul></div>').appendTo(this.inner_toolbar.removeClass("hide"));
+		}
+		return $group;
+	},
+
+	set_inner_btn_group_as_primary: function(label) {
+		this.get_inner_group_button(label).find("button").removeClass("btn-default").addClass("btn-primary");
+	},
+
+	add_inner_button: function(label, action, group) {
+		if(group) {
+			var $group = this.get_inner_group_button(group);
+			$('<li><a>'+label+'</a></li>').on('click', action).appendTo($group.find(".dropdown-menu"));
+		} else {
+			return $('<button class="btn btn-default btn-xs" style="margin-left: 10px;">'+__(label)+'</btn>')
+				.on("click", action).appendTo(this.inner_toolbar.removeClass("hide"))
+		}
+	},
+
+	clear_inner_toolbar: function() {
+		this.inner_toolbar.empty().addClass("hide");
 	},
 
 	//-- Sidebar --//
@@ -265,9 +297,11 @@ frappe.ui.Page = Class.extend({
 	set_title: function(txt, icon) {
 		if(!txt) txt = "";
 
-		// strip icon
+		// strip html
+		txt = strip_html(txt);
 		this.title = txt;
-		frappe.utils.set_title(txt.replace(/<[^>]*>/g, ""));
+
+		frappe.utils.set_title(txt);
 		if(icon) {
 			txt = '<span class="'+ icon +' text-muted" style="font-size: inherit;"></span> ' + txt;
 		}
@@ -277,25 +311,6 @@ frappe.ui.Page = Class.extend({
 	set_title_sub: function(txt) {
 		// strip icon
 		this.$sub_title_area.html(txt).toggleClass("hide", !!!txt);
-	},
-
-	add_module_icon: function(module, doctype, onclick, sub_title) {
-		var module_info = frappe.get_module(module);
-		if(!module_info) {
-			module_info = {
-				icon: "icon-question-sign",
-				color: "#ddd"
-			}
-		}
-		var icon = frappe.boot.doctype_icons[doctype] || module_info.icon;
-
-		this.get_main_icon(icon)
-			.attr("doctype-name", doctype);
-
-		this.set_title_left(function() {
-			var route = frappe.get_route()[0]==module_info.link ? "" : module_info.link;
-			frappe.set_route(route);
-		});
 	},
 
 	get_main_icon: function(icon) {
@@ -393,7 +408,9 @@ frappe.ui.Page = Class.extend({
 		this.current_view_name = name;
 
 		this.views[name].toggle(true);
-	}
+
+		this.wrapper.trigger('view-change');
+	},
 });
 
 frappe.ui.scroll = function(element, animate, additional_offset) {
@@ -404,5 +421,4 @@ frappe.ui.scroll = function(element, animate, additional_offset) {
 	} else {
 		$(window).scrollTop(top);
 	}
-
-};
+}

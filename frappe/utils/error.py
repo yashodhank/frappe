@@ -21,7 +21,7 @@ def make_error_snapshot(exception):
 	if frappe.conf.disable_error_snapshot:
 		return
 
-	logger = frappe.get_logger()
+	logger = frappe.logger(__name__, with_more_info=False)
 
 	try:
 		error_id = '{timestamp:s}-{ip:s}-{hash:s}'.format(
@@ -41,7 +41,7 @@ def make_error_snapshot(exception):
 		logger.error('New Exception collected with id: {}'.format(error_id))
 
 	except Exception, e:
-		logger.error('Could not take error snapshot: {0}'.format(e))
+		logger.error('Could not take error snapshot: {0}'.format(e), exc_info=True)
 
 def get_snapshot(exception, context=10):
 	"""
@@ -185,16 +185,17 @@ def collect_error_snapshots():
 
 def clear_old_snapshots():
 	"""Clear snapshots that are older than a month"""
-	frappe.delete_doc("Error Snapshot", frappe.db.sql_list("""select name from `tabError Snapshot`
-		where creation < date_sub(now(), interval 1 month) order by creation desc"""))
+	frappe.db.sql("""delete from `tabError Snapshot`
+		where creation < date_sub(now(), interval 1 month)""")
 
 	path = get_error_snapshot_path()
 	today = datetime.datetime.now()
 
 	for file in os.listdir(path):
-		ctime = datetime.datetime.fromtimestamp(os.path.getctime(file))
+		p = os.path.join(path, file)
+		ctime = datetime.datetime.fromtimestamp(os.path.getctime(p))
 		if (today - ctime).days > 31:
-			os.remove(os.path.join(path, file))
+			os.remove(os.path.join(path, p))
 
 def get_error_snapshot_path():
 	return frappe.get_site_path('error-snapshots')

@@ -23,6 +23,18 @@ frappe.utils = {
 		}
 		return true;
 	},
+	is_mobile: function() {
+		return frappe.utils.is_xs();
+	},
+	is_xs: function() {
+		return $(document).width() < 768;
+	},
+	is_sm: function() {
+		return $(document).width() < 991 && $(document).width() >= 768;
+	},
+	is_md: function() {
+		return $(document).width() < 1199 && $(document).width() >= 991;
+	},
 	strip_whitespace: function(html) {
 		return (html || "").replace(/<p>\s*<\/p>/g, "").replace(/<br>(\s*<br>\s*)+/g, "<br><br>");
 	},
@@ -59,6 +71,31 @@ frappe.utils = {
 					• • • \
 				</a></p>');
 		return content.html();
+	},
+	scroll_to: function(element, animate, additional_offset) {
+		var y = 0;
+		if(element && typeof element==='number') {
+			y = element;
+		} else if(element) {
+			var header_offset = $(".navbar").height() + $(".page-head").height();
+			var y = $(element).offset().top - header_offset - cint(additional_offset);
+		}
+
+		if(y < 0) {
+			y = 0;
+		}
+
+		// already there
+		if(y==$('body').scrollTop()) {
+			return;
+		}
+
+		if (animate!==false) {
+			$("body").animate({ scrollTop: y });
+		} else {
+			$(window).scrollTop(y);
+		}
+
 	},
 	filter_dict: function(dict, filters) {
 		var ret = [];
@@ -195,7 +232,7 @@ frappe.utils = {
 		var style = default_style || "default";
 		var colour = "darkgrey";
 		if(text) {
-			if(has_words(["Pending", "Review", "Medium", "Not Approved", "Pending"], text)) {
+			if(has_words(["Pending", "Review", "Medium", "Not Approved"], text)) {
 				style = "warning";
 				colour = "orange";
 			} else if(has_words(["Open", "Urgent", "High"], text)) {
@@ -286,6 +323,26 @@ frappe.utils = {
 
 	sum: function(list) {
 		return list.reduce(function(previous_value, current_value) { return flt(previous_value) + flt(current_value); }, 0.0);
+	},
+
+	arrays_equal: function(arr1, arr2) {
+		if (!arr1 || !arr2) {
+			return false;
+		}
+	    if (arr1.length != arr2.length) {
+			return false;
+		}
+	    for (var i = 0; i < arr1.length; i++) {
+	        if ($.isArray(arr1[i])) {
+	            if (!frappe.utils.arrays_equal(arr1[i], arr2[i])) {
+					return false;
+				}
+	        }
+	        else if (arr1[i] !== arr2[i]) {
+				return false;
+			}
+	    }
+	    return true;
 	},
 
 	intersection: function(a, b) {
@@ -498,5 +555,22 @@ frappe.utils = {
 			// pass
 		}
 
+	},
+	split_emails: function(txt) {
+		var email_list = [];
+
+		if (!txt) {
+			return email_list;
+		}
+
+		// emails can be separated by comma or newline
+		txt.split(/[,\n](?=(?:[^"]|"[^"]*")*$)/g).forEach(function(email) {
+			email = email.trim();
+			if (email) {
+				email_list.push(email);
+			}
+		});
+
+		return email_list;
 	}
 };

@@ -5,6 +5,7 @@ from __future__ import unicode_literals
 import frappe
 from frappe import _
 from frappe.utils import now_datetime, cint
+import re
 
 def set_new_name(doc):
 	"""Sets the `name`` property for the document based on various rules.
@@ -21,7 +22,11 @@ def set_new_name(doc):
 
 	doc.run_method("before_naming")
 
-	autoname = frappe.get_meta(doc.doctype).autoname
+	autoname = frappe.get_meta(doc.doctype).autoname or ""
+
+	if autoname.lower() != "prompt" and not frappe.flags.in_import:
+		doc.name = None
+
 	if getattr(doc, "amended_from", None):
 		_set_amended_name(doc)
 		return
@@ -29,10 +34,10 @@ def set_new_name(doc):
 	elif getattr(doc.meta, "issingle", False):
 		doc.name = doc.doctype
 
-	elif hasattr(doc, "autoname"):
+	else:
 		doc.run_method("autoname")
 
-	elif autoname:
+	if not doc.name and autoname:
 		if autoname.startswith('field:'):
 			fieldname = autoname[6:]
 			doc.name = (doc.get(fieldname) or "").strip()
@@ -43,12 +48,12 @@ def set_new_name(doc):
 			set_name_by_naming_series(doc)
 		elif "#" in autoname:
 			doc.name = make_autoname(autoname)
-		elif autoname=='Prompt':
+		elif autoname.lower()=='prompt':
 			# set from __newname in save.py
 			if not doc.name:
-				frappe.throw(_("Name not set via Prompt"))
+				frappe.throw(_("Name not set via prompt"))
 
-	if not doc.name:
+	if not doc.name or autoname=='hash':
 		doc.name = make_autoname('hash', doc.doctype)
 
 	doc.name = validate_name(doc.doctype, doc.name)
@@ -61,9 +66,9 @@ def set_name_by_naming_series(doc):
 	if not doc.naming_series:
 		frappe.throw(frappe._("Naming Series mandatory"))
 
-	doc.name = make_autoname(doc.naming_series+'.#####')
+	doc.name = make_autoname(doc.naming_series+'.#####', '', doc)
 
-def make_autoname(key, doctype=''):
+def make_autoname(key='', doctype='', doc=''):
 	"""
    Creates an autoname from the given key:
 
@@ -95,22 +100,26 @@ def make_autoname(key, doctype=''):
 	today = now_datetime()
 
 	for e in l:
-		en = ''
+		part = ''
 		if e.startswith('#'):
 			if not series_set:
 				digits = len(e)
-				en = getseries(n, digits, doctype)
+				part = getseries(n, digits, doctype)
 				series_set = True
 		elif e=='YY':
-			en = today.strftime('%y')
+			part = today.strftime('%y')
 		elif e=='MM':
-			en = today.strftime('%m')
+			part = today.strftime('%m')
 		elif e=='DD':
-			en = today.strftime("%d")
+			part = today.strftime("%d")
 		elif e=='YYYY':
-			en = today.strftime('%Y')
-		else: en = e
-		n+=en
+			part = today.strftime('%Y')
+		elif doc and doc.get(e):
+			part = doc.get(e)
+		else: part = e
+
+		if isinstance(part, basestring):
+			n+=part
 	return n
 
 def getseries(key, digits, doctype=''):
@@ -161,6 +170,11 @@ def validate_name(doctype, name, case=None, merge=False):
 	if not frappe.get_meta(doctype).get("issingle") and (doctype == name) and (name!="DocType"):
 		frappe.throw(_("Name of {0} cannot be {1}").format(doctype, name), frappe.NameError)
 
+	special_characters = "<>"
+	if re.findall("[{0}]+".format(special_characters), name):
+		message = ", ".join("'{0}'".format(c) for c in special_characters)
+		frappe.throw(_("Name cannot contain special characters like {0}").format(message), frappe.NameError)
+
 	return name
 
 def _set_amended_name(doc):
@@ -185,6 +199,8 @@ def append_number_if_name_exists(doc):
 			count = "1"
 
 		doc.name = "{0}-{1}".format(doc.name, count)
+
+	return doc
 
 def de_duplicate(doctype, name):
 	original_name = name

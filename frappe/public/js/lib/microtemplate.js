@@ -8,11 +8,27 @@ frappe.template.compile = function(str, name) {
 	if(!frappe.template.compiled[key]) {
 		if(str.indexOf("'")!==-1) {
 			str.replace(/'/g, "\\'");
-			console.warn("Warning: Single quotes (') may not work in templates");
+			//console.warn("Warning: Single quotes (') may not work in templates");
 		}
 
-		// repace jinja style tags
+		// replace jinja style tags
 		str = str.replace(/{{/g, "{%=").replace(/}}/g, "%}");
+		
+		// {% if not test %} --> {% if (!test) { %}
+		str = str.replace(/{%\s?if\s?\s?not\s?([^\(][^%{]+)\s?%}/g, "{% if (! $1) { %}")
+
+		// {% if test %} --> {% if (test) { %}
+		str = str.replace(/{%\s?if\s?([^\(][^%{]+)\s?%}/g, "{% if ($1) { %}");
+
+		// {% for item in list %}
+		//       --> {% for (var i=0, len=list.length; i<len; i++) {  var item = list[i]; %}
+		str = str.replace(/{%\s?for\s([a-z]+)\sin\s([a-z]+)\s?%}/g, "{% for (var i=0, len=$2.length; i<len; i++) { var $1 = $2[i]; %}");
+
+		// {% endfor %} --> {% } %}
+		str = str.replace(/{%\s?endif\s?%}/g, "{% }; %}");
+
+		// {% endif %} --> {% } %}
+		str = str.replace(/{%\s?endfor\s?%}/g, "{% }; %}");
 
 		fn_str = "var _p=[],print=function(){_p.push.apply(_p,arguments)};" +
 
@@ -58,7 +74,11 @@ frappe.render_grid = function(opts) {
 	// build context
 	if(opts.grid) {
 		opts.columns = opts.grid.getColumns();
-		opts.data = opts.grid.getData().getItems();
+		if(opts.report) {
+			opts.data = frappe.slickgrid_tools.get_filtered_items(opts.report.dataView);
+		} else if(opts.grid) {
+			opts.data = opts.grid.getData().getItems();
+		}
 	}
 
 	// render content

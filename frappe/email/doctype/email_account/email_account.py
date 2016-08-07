@@ -8,7 +8,7 @@ import re
 import socket
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import validate_email_add, cint, get_datetime, DATE_FORMAT, strip, comma_or
+from frappe.utils import validate_email_add, cint, get_datetime, DATE_FORMAT, strip, comma_or, sanitize_html
 from frappe.utils.user import is_system_user
 from frappe.utils.jinja import render_template
 from frappe.email.smtp import SMTPServer
@@ -18,6 +18,9 @@ from dateutil.relativedelta import relativedelta
 from datetime import datetime, timedelta
 from frappe.desk.form import assign_to
 from frappe.utils.user import get_system_managers
+from frappe.utils.background_jobs import enqueue, get_jobs
+from frappe.core.doctype.communication.email import set_incoming_outgoing_accounts
+from frappe.utils.scheduler import log
 
 class SentEmailInInbox(Exception): pass
 
@@ -93,22 +96,25 @@ class EmailAccount(Document):
 
 			server = SMTPServer(login = getattr(self, "login_id", None) \
 					or self.email_id,
-				password = self.password,
 				server = self.smtp_server,
 				port = cint(self.smtp_port),
 				use_ssl = cint(self.use_tls)
 			)
+			if self.password:
+				server.password = self.get_password()
 			server.sess
 
 	def get_server(self, in_receive=False):
 		"""Returns logged in POP3 connection object."""
-		args = {
+
+		args = frappe._dict({
 			"host": self.email_server,
 			"use_ssl": self.use_ssl,
 			"username": getattr(self, "login_id", None) or self.email_id,
-			"password": self.password,
 			"use_imap": self.use_imap
-		}
+		})
+		if self.password:
+			args.password = self.get_password()
 
 		if not args.get("host"):
 			frappe.throw(_("{0} is required").format("Email Server"))
@@ -182,11 +188,14 @@ class EmailAccount(Document):
 
 				except Exception:
 					frappe.db.rollback()
+					log('email_account.receive')
 					exceptions.append(frappe.get_traceback())
 
 				else:
 					frappe.db.commit()
 					attachments = [d.file_name for d in communication._attachments]
+
+					# TODO fix bug where it sends emails to 'Adminsitrator' during testing
 					communication.notify(attachments=attachments, fetched_from_email_account=True)
 
 			if exceptions:
@@ -215,22 +224,26 @@ class EmailAccount(Document):
 
 		self.set_thread(communication, email)
 
+		communication.flags.in_receive = True
 		communication.insert(ignore_permissions = 1)
 
 		# save attachments
 		communication._attachments = email.save_attachments_in_doc(communication)
 
 		# replace inline images
+
+
 		dirty = False
 		for file in communication._attachments:
 			if file.name in email.cid_map and email.cid_map[file.name]:
 				dirty = True
-				communication.content = communication.content.replace("cid:{0}".format(email.cid_map[file.name]),
+
+				email.content = email.content.replace("cid:{0}".format(email.cid_map[file.name]),
 					file.file_url)
 
 		if dirty:
 			# not sure if using save() will trigger anything
-			communication.db_set("content", communication.content)
+			communication.db_set("content", sanitize_html(email.content))
 
 		# notify all participants of this thread
 		if self.enable_auto_reply and getattr(communication, "is_first", False):
@@ -333,7 +346,7 @@ class EmailAccount(Document):
 	def send_auto_reply(self, communication, email):
 		"""Send auto reply if set."""
 		if self.enable_auto_reply:
-			communication.set_incoming_outgoing_accounts()
+			set_incoming_outgoing_accounts(communication)
 
 			frappe.sendmail(recipients = [email.from_email],
 				sender = self.email_id,
@@ -344,32 +357,26 @@ class EmailAccount(Document):
 				reference_doctype = communication.reference_doctype,
 				reference_name = communication.reference_name,
 				message_id = communication.name,
-				unsubscribe_message = _("Leave this conversation"),
-				bulk=True)
+				in_reply_to = email.mail.get("Message-Id"), # send back the Message-Id as In-Reply-To
+				unsubscribe_message = _("Leave this conversation"))
 
 	def get_unreplied_notification_emails(self):
 		"""Return list of emails listed"""
 		self.send_notification_to = self.send_notification_to.replace(",", "\n")
-		out = [e.strip() for e in self.send_notification_to.split("\n")]
+		out = [e.strip() for e in self.send_notification_to.split("\n") if e.strip()]
 		return out
 
 	def on_trash(self):
 		"""Clear communications where email account is linked"""
 		frappe.db.sql("update `tabCommunication` set email_account='' where email_account=%s", self.name)
 
+	def after_rename(self, old, new, merge=False):
+		frappe.db.set_value("Email Account", new, "email_account_name", new)
+
 @frappe.whitelist()
 def get_append_to(doctype=None, txt=None, searchfield=None, start=None, page_len=None, filters=None):
 	if not txt: txt = ""
 	return [[d] for d in frappe.get_hooks("email_append_to") if txt in d]
-
-def pull(now=False):
-	"""Will be called via scheduler, pull emails from all enabled Email accounts."""
-	import frappe.tasks
-	for email_account in frappe.get_list("Email Account", filters={"enable_incoming": 1}):
-		if now:
-			frappe.tasks.pull_from_email_account(frappe.local.site, email_account.name)
-		else:
-			frappe.tasks.pull_from_email_account.delay(frappe.local.site, email_account.name)
 
 def notify_unreplied():
 	"""Sends email notifications if there are unreplied Communications
@@ -393,7 +400,28 @@ def notify_unreplied():
 					# if status is still open
 					frappe.sendmail(recipients=email_account.get_unreplied_notification_emails(),
 						content=comm.content, subject=comm.subject, doctype= comm.reference_doctype,
-						name=comm.reference_name, bulk=True)
+						name=comm.reference_name)
 
 				# update flag
 				comm.db_set("unread_notification_sent", 1)
+
+def pull(now=False):
+	"""Will be called via scheduler, pull emails from all enabled Email accounts."""
+	queued_jobs = get_jobs(site=frappe.local.site, key='job_name')[frappe.local.site]
+
+	for email_account in frappe.get_list("Email Account", filters={"enable_incoming": 1}):
+		if now:
+			pull_from_email_account(email_account.name)
+
+		else:
+			# job_name is used to prevent duplicates in queue
+			job_name = 'pull_from_email_account|{0}'.format(email_account.name)
+
+			if job_name not in queued_jobs:
+				enqueue(pull_from_email_account, 'short', event='all', job_name=job_name,
+					email_account=email_account.name)
+
+def pull_from_email_account(email_account):
+	'''Runs within a worker process'''
+	email_account = frappe.get_doc("Email Account", email_account)
+	email_account.receive()

@@ -7,7 +7,7 @@ import frappe, json
 from frappe import _dict
 import frappe.share
 
-class User:
+class UserPermissions:
 	"""
 	A user permission object can be accessed as `frappe.get_user()`
 	"""
@@ -56,10 +56,6 @@ class User:
 		if not self.roles:
 			self.roles = get_roles(self.name)
 		return self.roles
-
-	def get_block_modules(self):
-		"""Returns list of blocked modules"""
-		return [d.module for d in self.doc.block_modules] if self.doc.block_modules else []
 
 	def build_doctype_map(self):
 		"""build map of special doctype properties"""
@@ -149,9 +145,6 @@ class User:
 			self.can_import = frappe.db.sql_list("""select name from `tabDocType`
 				where allow_import = 1""")
 
-		self.all_reports = frappe.db.sql("""select name, report_type from tabReport
-			where ref_doctype in ('{0}')""".format("', '".join(self.can_get_report)))
-
 	def get_defaults(self):
 		import frappe.defaults
 		self.defaults = frappe.defaults.get_defaults(self.name)
@@ -200,7 +193,6 @@ class User:
 
 		d.roles = self.get_roles()
 		d.defaults = self.get_defaults()
-		d.block_modules = self.get_block_modules()
 
 		for key in ("can_create", "can_write", "can_read", "can_cancel", "can_delete",
 			"can_get_report", "allow_modules", "all_read", "can_search",
@@ -209,8 +201,14 @@ class User:
 
 			d[key] = list(set(getattr(self, key)))
 
-		d.all_reports = dict(self.all_reports)
+		d.all_reports = self.get_all_reports()
 		return d
+
+	def get_all_reports(self):
+		reports =  frappe.db.sql("""select name, report_type, ref_doctype from tabReport
+		    where ref_doctype in ('{0}')""".format("', '".join(self.can_get_report)), as_dict=1)
+
+		return frappe._dict((d.name, d) for d in reports)
 
 def get_user_fullname(user):
 	fullname = frappe.db.sql("SELECT CONCAT_WS(' ', first_name, last_name) FROM `tabUser` WHERE name=%s", (user,))
@@ -245,7 +243,7 @@ def get_system_managers(only_name=False):
 def add_role(user, role):
 	frappe.get_doc("User", user).add_roles(role)
 
-def add_system_manager(email, first_name=None, last_name=None):
+def add_system_manager(email, first_name=None, last_name=None, send_welcome_email=False):
 	# add user
 	user = frappe.new_doc("User")
 	user.update({
@@ -254,7 +252,8 @@ def add_system_manager(email, first_name=None, last_name=None):
 		"enabled": 1,
 		"first_name": first_name or email,
 		"last_name": last_name,
-		"user_type": "System User"
+		"user_type": "System User",
+		"send_welcome_email": 1 if send_welcome_email else 0
 	})
 	user.insert()
 
@@ -288,10 +287,11 @@ def get_enabled_system_users():
 		user_type='System User' and enabled=1 and name not in ('Administrator', 'Guest')""", as_dict=1)
 
 def is_website_user():
-	return frappe.get_user().doc.user_type == "Website User"
+	return frappe.db.get_value('User', frappe.session.user, 'user_type') == "Website User"
 
 def is_system_user(username):
 	return frappe.db.get_value("User", {"name": username, "enabled": 1, "user_type": "System User"})
+
 
 def get_users():
 	from frappe.core.doctype.user.user import get_system_users

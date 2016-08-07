@@ -12,13 +12,11 @@ python-geoip-geolite2
 python-dateutil
 pytz
 six
-slugify
 termcolor
 werkzeug
 semantic_version
 rauth>=0.6.2
 requests
-celery
 redis
 selenium
 -e git+https://github.com/frappe/python-pdfkit.git#egg=pdfkit
@@ -30,4 +28,10 @@ click
 num2words
 watchdog==0.8.0
 bleach
+bleach-whitelist
 Pillow
+beautifulsoup4
+rq
+schedule
+cryptography
+zxcvbn

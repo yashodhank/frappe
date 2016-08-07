@@ -15,17 +15,22 @@ def get_data():
 				},
 				{
 					"type": "doctype",
+					"name": "File",
+					"label": _("Files"),
+				},
+				{
+					"type": "doctype",
 					"name": "Event",
 					"label": _("Calendar"),
-					"view": "Calendar",
+					"link": "Calendar/Event",
 					"description": _("Event and other calendars."),
 				},
 				{
 					"type": "page",
-					"label": _("Messages"),
-					"name": "messages",
+					"label": _("Chat"),
+					"name": "chat",
 					"description": _("Chat messages and other notifications."),
-					"data_doctype": "Comment"
+					"data_doctype": "Communication"
 				},
 				{
 					"type": "doctype",

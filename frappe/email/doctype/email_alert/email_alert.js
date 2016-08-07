@@ -24,17 +24,31 @@ frappe.email_alert = {
 				function(d) { return (d.fieldtype=="Date" || d.fieldtype=="Datetime") ?
 					get_select_options(d) : null; }));
 
+			var email_fields = $.map(fields,
+				function(d) { return d.options == "Email" ?
+					get_select_options(d) : null; });
+
 			// set email recipient options
 			frappe.meta.get_docfield("Email Alert Recipient", "email_by_document_field",
-				frm.doc.name).options = ["owner"].concat(options);
+				frm.doc.name).options = ["owner"].concat(email_fields);
 
 		});
 	}
 }
 
 frappe.ui.form.on("Email Alert", {
+	onload: function(frm) {
+		frm.set_query("document_type", function() {
+			return {
+				"filters": {
+					"istable": 0
+				}
+			}
+		})
+	},
 	refresh: function(frm) {
 		frappe.email_alert.setup_fieldname_select(frm);
+		frm.trigger('event');
 	},
 	document_type: function(frm) {
 		frappe.email_alert.setup_fieldname_select(frm);
@@ -42,5 +56,24 @@ frappe.ui.form.on("Email Alert", {
 	view_properties: function(frm) {
 		frappe.route_options = {doc_type:frm.doc.document_type};
 		frappe.set_route("Form", "Customize Form");
+	},
+	event: function(frm) {
+		if(in_list(['Days Before', 'Days After'], frm.doc.event)) {
+			frm.add_custom_button(__('Get Alerts for Today'), function() {
+				frappe.call({
+					method: 'frappe.email.doctype.email_alert.email_alert.get_documents_for_today',
+					args: {
+						email_alert: frm.doc.name
+					},
+					callback: function(r) {
+						if(r.message) {
+							msgprint(r.message);
+						} else {
+							msgprint(__('No alerts for today'));
+						}
+					}
+				});
+			});
+		}
 	}
 });

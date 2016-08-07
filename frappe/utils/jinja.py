@@ -22,13 +22,35 @@ def get_jenv():
 def get_template(path):
 	return get_jenv().get_template(path)
 
+def validate_template(html):
+	"""Throws exception if there is a syntax error in the Jinja Template"""
+	import frappe
+	from jinja2 import TemplateSyntaxError
+
+	jenv = get_jenv()
+	try:
+		jenv.from_string(html)
+	except TemplateSyntaxError, e:
+		frappe.msgprint('Line {}: {}'.format(e.lineno, e.message))
+		frappe.throw(frappe._("Syntax error in template"))
+
 def render_template(template, context, is_path=None):
-	if is_path or template.startswith("templates/"):
+	'''Render a template using Jinja
+
+	:param template: path or HTML containing the jinja template
+	:param context: dict of properties to pass to the template
+	:param is_path: (optional) assert that the `template` parameter is a path'''
+
+	# if it ends with .html then its a freaking path, not html
+	if (is_path
+		or template.startswith("templates/")
+		or (template.endswith('.html') and '\n' not in template)):
 		return get_jenv().get_template(template).render(context)
 	else:
 		return get_jenv().from_string(template).render(context)
 
 def get_allowed_functions_for_jenv():
+	import os
 	import frappe
 	import frappe.utils
 	import frappe.utils.data
@@ -73,7 +95,7 @@ def get_allowed_functions_for_jenv():
 			"user": getattr(frappe.local, "session", None) and frappe.local.session.user or "Guest",
 			"date_format": frappe.db.get_default("date_format") or "yyyy-mm-dd",
 			"get_fullname": frappe.utils.get_fullname,
-			"get_gravatar": frappe.utils.get_gravatar,
+			"get_gravatar": frappe.utils.get_gravatar_url,
 			"full_name": getattr(frappe.local, "session", None) and frappe.local.session.data.full_name or "Guest",
 			"render_template": frappe.render_template
 		},
@@ -83,11 +105,12 @@ def get_allowed_functions_for_jenv():
 			"get_controller": get_controller
 		},
 		"get_visible_columns": \
-			frappe.get_attr("frappe.templates.pages.print.get_visible_columns"),
+			frappe.get_attr("frappe.www.print.get_visible_columns"),
 		"_": frappe._,
 		"get_shade": get_shade,
 		"scrub": scrub,
-		"guess_mimetype": mimetypes.guess_type
+		"guess_mimetype": mimetypes.guess_type,
+		"dev_server": 1 if os.environ.get('DEV_SERVER', False) else 0
 	}
 
 def get_jloader():
@@ -95,9 +118,11 @@ def get_jloader():
 	if not frappe.local.jloader:
 		from jinja2 import ChoiceLoader, PackageLoader, PrefixLoader
 
-		apps = frappe.get_installed_apps(sort=True)
-
+		apps = frappe.local.flags.web_pages_apps or frappe.get_installed_apps(sort=True)
 		apps.reverse()
+
+		if not "frappe" in apps:
+			apps.append('frappe')
 
 		frappe.local.jloader = ChoiceLoader(
 			# search for something like app/templates/...
@@ -113,9 +138,8 @@ def get_jloader():
 
 def set_filters(jenv):
 	import frappe
-	from frappe.utils import global_date_format, cint, cstr, flt
+	from frappe.utils import global_date_format, cint, cstr, flt, markdown
 	from frappe.website.utils import get_shade, abs_url
-	from markdown2 import markdown
 
 	jenv.filters["global_date_format"] = global_date_format
 	jenv.filters["markdown"] = markdown
@@ -132,11 +156,3 @@ def set_filters(jenv):
 		for jenv_filter in (frappe.get_hooks(app_name=app).jenv_filter or []):
 			filter_name, filter_function = jenv_filter.split(":")
 			jenv.filters[filter_name] = frappe.get_attr(filter_function)
-
-def render_include(content):
-	from frappe.utils import cstr
-
-	content = cstr(content)
-	if "{% include" in content:
-		content = get_jenv().from_string(content).render()
-	return content

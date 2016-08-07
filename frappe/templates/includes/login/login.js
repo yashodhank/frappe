@@ -1,5 +1,7 @@
-window.disable_signup = {{ disable_signup and "true" or "false" }};
+// login.js
+// don't remove this line (used in test)
 
+window.disable_signup = {{ disable_signup and "true" or "false" }};
 
 window.login = {};
 
@@ -76,16 +78,11 @@ login.signup = function() {
 
 // Login
 login.call = function(args) {
-	frappe.freeze();
-
-	$.ajax({
+	return frappe.call({
 		type: "POST",
-		url: "/",
-		data: args,
-		dataType: "json",
+		args: args,
+		freeze: true,
 		statusCode: login.login_handlers
-	}).always(function(){
-		frappe.unfreeze();
 	});
 }
 
@@ -95,8 +92,19 @@ login.login_handlers = (function() {
 			if(xhr.responseJSON) {
 				data = xhr.responseJSON;
 			}
-			var message = data._server_messages
-				? JSON.parse(data._server_messages).join("\n") : default_message;
+
+			var message = default_message;
+			if (data._server_messages) {
+				message = ($.map(JSON.parse(data._server_messages || '[]'), function() {
+					// temp fix for messages sent as dict
+					try {
+						return JSON.parse(v).message;
+					} catch (e) {
+						return v;
+					}
+				}) || []).join('<br>') || default_message;
+			}
+
 			frappe.msgprint(message);
 		};
 	}
@@ -104,7 +112,7 @@ login.login_handlers = (function() {
 	var login_handlers = {
 		200: function(data) {
 			if(data.message=="Logged In") {
-				window.location.href = get_url_arg("redirect-to") || "/desk";
+				window.location.href = get_url_arg("redirect-to") || data.home_page;
 			} else if(data.message=="No App") {
 				if(localStorage) {
 					var last_visited =
@@ -116,7 +124,7 @@ login.login_handlers = (function() {
 				if(last_visited && last_visited != "/login") {
 					window.location.href = last_visited;
 				} else {
-					window.location.href = "/me";
+					window.location.href = data.home_page;
 				}
 			} else if(["#signup", "#forgot"].indexOf(window.location.hash)!==-1) {
 				frappe.msgprint(data.message);

@@ -272,8 +272,17 @@ _f.Frm.prototype.set_value = function(field, value, if_missing) {
 	}
 }
 
-_f.Frm.prototype.call = function(opts) {
+_f.Frm.prototype.call = function(opts, args, callback) {
 	var me = this;
+	if(typeof opts==='string') {
+		// called as frm.call('do_this', {with_arg: 'arg'});
+		opts = {
+			method: opts,
+			doc: this.doc,
+			args: args,
+			callback: callback
+		};
+	}
 	if(!opts.doc) {
 		if(opts.method.indexOf(".")===-1)
 			opts.method = frappe.model.get_server_module_name(me.doctype) + "." + opts.method;
@@ -283,7 +292,14 @@ _f.Frm.prototype.call = function(opts) {
 				if(opts.child) {
 					// update child doc
 					opts.child = locals[opts.child.doctype][opts.child.name];
-					$.extend(opts.child, r.message);
+
+					var std_field_list = ["doctype"].concat(frappe.model.std_fields_list);
+					for (key in r.message) {
+						if (std_field_list.indexOf(key)===-1) {
+							opts.child[key] = r.message[key];
+						}
+					}
+
 					me.fields_dict[opts.child.parentfield].refresh();
 				} else {
 					// update parent doc
@@ -307,12 +323,6 @@ _f.Frm.prototype.call = function(opts) {
 _f.Frm.prototype.get_field = function(field) {
 	return cur_frm.fields_dict[field];
 };
-
-_f.Frm.prototype.new_doc = function(doctype, field, opts) {
-	frappe._from_link = field;
-	frappe._from_link_scrollY = scrollY;
-	new_doc(doctype, opts);
-}
 
 
 _f.Frm.prototype.set_read_only = function() {
@@ -341,4 +351,43 @@ _f.Frm.prototype.open_grid_row = function() {
 
 _f.Frm.prototype.is_new = function() {
 	return this.doc.__islocal;
+}
+
+_f.Frm.prototype.get_title = function() {
+	if(this.meta.title_field) {
+		return this.doc[this.meta.title_field];
+	} else {
+		return this.doc.name;
+	}
+}
+
+_f.Frm.prototype.set_indicator_formatter = function(fieldname, get_color, get_text) {
+	// get doctype from parent
+	if(frappe.meta.docfield_map[this.doctype][fieldname]) {
+		doctype = this.doctype;
+	} else {
+		frappe.meta.get_table_fields(this.doctype).every(function(df) {
+			if(frappe.meta.docfield_map[df.options][fieldname]) {
+				doctype = df.options;
+				return false;
+			} else {
+				return true;
+			}
+		})
+	}
+
+	frappe.meta.get_docfield(doctype, fieldname, this.doc.name).formatter =
+		function(value, df, options, doc) {
+			if(value) {
+				return repl('<a class="indicator %(color)s" href="#Form/%(doctype)s/%(name)s">%(label)s</a>', {
+					color: get_color(doc),
+					doctype: df.options,
+					name: value,
+					label: get_text ? get_text(doc) : value
+				});
+			} else {
+				return '';
+			}
+		};
+
 }

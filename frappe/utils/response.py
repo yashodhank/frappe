@@ -43,14 +43,15 @@ def build_response(response_type=None):
 
 def as_csv():
 	response = Response()
-	response.headers[b"Content-Type"] = b"text/csv; charset: utf-8"
+	response.mimetype = 'text/csv'
+	response.charset = 'utf-8'
 	response.headers[b"Content-Disposition"] = ("attachment; filename=\"%s.csv\"" % frappe.response['doctype'].replace(' ', '_')).encode("utf-8")
 	response.data = frappe.response['result']
 	return response
 
 def as_raw():
 	response = Response()
-	response.headers[b"Content-Type"] = frappe.response.get("content_type") or mimetypes.guess_type(frappe.response['filename'])[0] or b"application/unknown"
+	response.mimetype = frappe.response.get("content_type") or mimetypes.guess_type(frappe.response['filename'])[0] or b"application/unknown"
 	response.headers[b"Content-Disposition"] = ("filename=\"%s\"" % frappe.response['filename'].replace(' ', '_')).encode("utf-8")
 	response.data = frappe.response['filecontent']
 	return response
@@ -62,7 +63,8 @@ def as_json():
 		response.status_code = frappe.local.response['http_status_code']
 		del frappe.local.response['http_status_code']
 
-	response.headers[b"Content-Type"] = b"application/json; charset: utf-8"
+	response.mimetype = 'application/json'
+	response.charset = 'utf-8'
 	response.data = json.dumps(frappe.local.response, default=json_handler, separators=(',',':'))
 	return response
 
@@ -105,7 +107,7 @@ def json_handler(obj):
 
 def as_page():
 	"""print web page"""
-	return render(frappe.response['page_name'], http_status_code=frappe.response.get("http_status_code"))
+	return render(frappe.response['route'], http_status_code=frappe.response.get("http_status_code"))
 
 def redirect():
 	return werkzeug.utils.redirect(frappe.response.location)
@@ -136,7 +138,7 @@ def send_private_file(path):
 	if frappe.local.request.headers.get('X-Use-X-Accel-Redirect'):
 		path = '/protected/' + path
 		response = Response()
-		response.headers[b'X-Accel-Redirect'] = path
+		response.headers[b'X-Accel-Redirect'] = frappe.utils.encode(path)
 
 	else:
 		filepath = frappe.utils.get_site_path(path)
@@ -150,7 +152,7 @@ def send_private_file(path):
 	# no need for content disposition and force download. let browser handle its opening.
 	# response.headers.add(b'Content-Disposition', b'attachment', filename=filename.encode("utf-8"))
 
-	response.headers[b'Content-Type'] = mimetypes.guess_type(filename)[0] or b'application/octet-stream'
+	response.mimetype = mimetypes.guess_type(filename)[0] or b'application/octet-stream'
 
 	return response
 

@@ -33,6 +33,7 @@ $.extend(frappe.model, {
 
 	new_names: {},
 	events: {},
+	list_settings: {},
 
 	init: function() {
 		// setup refresh if the document is updated somewhere else
@@ -81,7 +82,7 @@ $.extend(frappe.model, {
 		return docfield[0];
 	},
 
-	with_doctype: function(doctype, callback) {
+	with_doctype: function(doctype, callback, async) {
 		if(locals.DocType[doctype]) {
 			callback && callback();
 		} else {
@@ -98,6 +99,7 @@ $.extend(frappe.model, {
 					with_parent: 1,
 					cached_timestamp: cached_timestamp
 				},
+				async: async,
 				freeze: true,
 				callback: function(r) {
 					if(r.exc) {
@@ -112,6 +114,12 @@ $.extend(frappe.model, {
 					}
 					frappe.model.init_doctype(doctype);
 					frappe.defaults.set_user_permissions(r.user_permissions);
+
+					if(r.list_settings) {
+						// remember filters and other settings from last view
+						frappe.model.list_settings[doctype] = JSON.parse(r.list_settings);
+						frappe.model.list_settings[doctype].updated_on = moment().toString();
+					}
 					callback && callback(r);
 				}
 			});
@@ -128,6 +136,9 @@ $.extend(frappe.model, {
 		}
 		if(meta.__map_js) {
 			eval(meta.__map_js);
+		}
+		if(meta.__tree_js) {
+			eval(meta.__tree_js);
 		}
 	},
 
@@ -156,29 +167,6 @@ $.extend(frappe.model, {
 	set_docinfo: function(doctype, name, key, value) {
 		if (frappe.model.docinfo[doctype] && frappe.model.docinfo[doctype][name]) {
 			frappe.model.docinfo[doctype][name][key] = value;
-		}
-	},
-
-	new_comment: function(comment) {
-		var reference_doctype = comment.comment_doctype || comment.reference_doctype;
-		var reference_name = comment.comment_docname || comment.reference_name;
-
-		if (frappe.model.docinfo[reference_doctype] && frappe.model.docinfo[reference_doctype][reference_name]) {
-			var comments = frappe.model.docinfo[reference_doctype][reference_name].comments;
-			var comment_exists = false;
-			for (var i=0, l=comments.length; i<l; i++) {
-				if (comments[i].name==comment.name) {
-					comment_exists = true;
-					break;
-				}
-			}
-
-			if (!comment_exists) {
-				 frappe.model.docinfo[reference_doctype][reference_name].comments = comments.concat([comment]);
-			}
-		}
-		if (cur_frm.doctype === reference_doctype && cur_frm.docname === reference_name) {
-			cur_frm.comments && cur_frm.comments.refresh();
 		}
 	},
 
@@ -235,7 +223,7 @@ $.extend(frappe.model, {
 
 	is_single: function(doctype) {
 		if(!doctype) return false;
-		return locals.DocType[doctype] && locals.DocType[doctype].issingle;
+		return frappe.boot.single_types.indexOf(doctype) != -1;
 	},
 
 	can_import: function(doctype, frm) {
@@ -335,12 +323,17 @@ $.extend(frappe.model, {
 		var doc = locals[doctype] && locals[doctype][docname];
 
 		if(doc && doc[fieldname] !== value) {
+			if(doc.__unedited && !(!doc[fieldname] && !value)) {
+				// unset unedited flag for virgin rows
+				doc.__unedited = false;
+			}
+
 			doc[fieldname] = value;
 			frappe.model.trigger(fieldname, value, doc);
 			return true;
 		} else {
 			// execute link triggers (want to reselect to execute triggers)
-			if(fieldtype=="Link") {
+			if(fieldtype=="Link" && doc) {
 				frappe.model.trigger(fieldname, value, doc);
 			}
 		}
@@ -546,7 +539,7 @@ $.extend(frappe.model, {
 			}
 		}
 		return all;
-	}
+	},
 });
 
 // legacy

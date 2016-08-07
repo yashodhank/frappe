@@ -6,6 +6,8 @@ import frappe
 from frappe import _
 from frappe.utils import cint
 from frappe.model.naming import validate_name
+from frappe.model.dynamic_links import get_dynamic_link_map
+from frappe.utils.password import rename_password
 
 @frappe.whitelist()
 def rename_doc(doctype, old, new, force=False, merge=False, ignore_permissions=False):
@@ -41,7 +43,6 @@ def rename_doc(doctype, old, new, force=False, merge=False, ignore_permissions=F
 	if doctype=='DocType':
 		rename_doctype(doctype, old, new, force)
 
-	update_comments(doctype, old, new, force)
 	update_attachments(doctype, old, new)
 
 	if merge:
@@ -56,6 +57,9 @@ def rename_doc(doctype, old, new, force=False, merge=False, ignore_permissions=F
 	new_doc.run_method("after_rename", old, new, merge)
 
 	rename_versions(doctype, old, new)
+
+	if not merge:
+		rename_password(doctype, old, new)
 
 	# update user_permissions
 	frappe.db.sql("""update tabDefaultValue set defvalue=%s where parenttype='User Permission'
@@ -91,7 +95,11 @@ def validate_rename(doctype, new, meta, merge, force, ignore_permissions):
 	if merge and not exists:
 		frappe.msgprint(_("{0} {1} does not exist, select a new target to merge").format(doctype, new), raise_exception=1)
 
-	if (not merge) and exists == new:
+	if exists and exists != new:
+		# for fixing case, accents
+		exists = None
+
+	if (not merge) and exists:
 		frappe.msgprint(_("Another {0} with name {1} exists, select another name").format(doctype, new), raise_exception=1)
 
 	if not (ignore_permissions or frappe.has_permission(doctype, "write")):
@@ -117,14 +125,6 @@ def rename_doctype(doctype, old, new, force=False):
 
 	# change parenttype for fieldtype Table
 	update_parenttype_values(old, new)
-
-	# rename comments
-	frappe.db.sql("""update tabComment set comment_doctype=%s where comment_doctype=%s""",
-		(new, old))
-
-def update_comments(doctype, old, new, force=False):
-	frappe.db.sql("""update `tabComment` set comment_docname=%s
-		where comment_doctype=%s and comment_docname=%s""", (new, doctype, old))
 
 def update_child_docs(old, new, meta):
 	# update "parent"
@@ -306,33 +306,26 @@ def update_parenttype_values(old, new):
 			where parenttype=%s""" % (doctype, '%s', '%s'),
 		(new, old))
 
-dynamic_link_queries =  [
-	"""select parent, fieldname, options from tabDocField where fieldtype='Dynamic Link'""",
-	"""select dt as parent, fieldname, options from `tabCustom Field` where fieldtype='Dynamic Link'""",
-]
-
 def rename_dynamic_links(doctype, old, new):
-	for query in dynamic_link_queries:
-		for df in frappe.db.sql(query, as_dict=True):
+	for df in get_dynamic_link_map().get(doctype, []):
+		# dynamic link in single, just one value to check
+		if frappe.get_meta(df.parent).issingle:
+			refdoc = frappe.db.get_singles_dict(df.parent)
+			if refdoc.get(df.options)==doctype and refdoc.get(df.fieldname)==old:
 
-			# dynamic link in single, just one value to check
-			if frappe.get_meta(df.parent).issingle:
-				refdoc = frappe.db.get_singles_dict(df.parent)
-				if refdoc.get(df.options)==doctype and refdoc.get(df.fieldname)==old:
+				frappe.db.sql("""update tabSingles set value=%s where
+					field=%s and value=%s and doctype=%s""", (new, df.fieldname, old, df.parent))
+		else:
+			# because the table hasn't been renamed yet!
+			parent = df.parent if df.parent != new else old
 
-					frappe.db.sql("""update tabSingles set value=%s where
-						field=%s and value=%s and doctype=%s""", (new, df.fieldname, old, df.parent))
-			else:
-				# because the table hasn't been renamed yet!
-				parent = df.parent if df.parent != new else old
+			# replace for each value where renamed
+			for to_change in frappe.db.sql_list("""select name from `tab{parent}` where
+				{options}=%s and {fieldname}=%s""".format(parent=parent, options=df.options,
+				fieldname=df.fieldname), (doctype, old)):
 
-				# replace for each value where renamed
-				for to_change in frappe.db.sql_list("""select name from `tab{parent}` where
-					{options}=%s and {fieldname}=%s""".format(parent=parent, options=df.options,
-					fieldname=df.fieldname), (doctype, old)):
-
-					frappe.db.sql("""update `tab{parent}` set {fieldname}=%s
-						where name=%s""".format(**df), (new, to_change))
+				frappe.db.sql("""update `tab{parent}` set {fieldname}=%s
+					where name=%s""".format(**df), (new, to_change))
 
 def bulk_rename(doctype, rows=None, via_console = False):
 	"""Bulk rename documents

@@ -39,6 +39,7 @@ body[data-route="desktop"] .navbar-default {
   cursor: pointer;
   box-shadow: 0px 2px 5px rgba(0, 0, 0, 0.15);
 }
+.app-icon .inner,
 .app-icon i {
   font-size: 32px;
   min-width: 32px;
@@ -47,6 +48,10 @@ body[data-route="desktop"] .navbar-default {
   transition: 0.2s;
   -webkit-transition: 0.2s;
   text-shadow: -1px 1px 5px rgba(0, 0, 0, 0.15);
+}
+.app-icon .inner {
+  line-height: 32px;
+  font-weight: bold;
 }
 .app-icon svg,
 .app-icon img {
@@ -73,6 +78,7 @@ body[data-route="desktop"] .navbar-default {
   text-align: center;
   text-shadow: none;
   letter-spacing: normal;
+  cursor: pointer;
 }
 .app-icon:hover path {
   fill: #fff;
@@ -172,4 +178,11 @@ body[data-route="desktop"] .navbar-default {
 }
 .desktop-list-item h4 {
   display: inline-block;
+}
+.navbar-set-desktop-icons {
+  display: none;
+}
+body[data-route=""] .navbar-set-desktop-icons,
+body[data-route="desktop"] .navbar-set-desktop-icons {
+  display: block;
 }

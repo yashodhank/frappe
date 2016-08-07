@@ -12,6 +12,7 @@ import warnings
 import datetime
 import frappe
 import frappe.defaults
+import frappe.async
 import re
 import frappe.model.meta
 from frappe.utils import now, get_datetime, cstr
@@ -126,6 +127,7 @@ class Database:
 						frappe.errprint(query % values)
 					except TypeError:
 						frappe.errprint([query, values])
+
 				if (frappe.conf.get("logging") or False)==2:
 					frappe.log("<<<< query")
 					frappe.log(query)
@@ -144,10 +146,21 @@ class Database:
 					frappe.log(">>>>")
 
 				self._cursor.execute(query)
+
 		except Exception, e:
 			# ignore data definition errors
 			if ignore_ddl and e.args[0] in (1146,1054,1091):
 				pass
+
+			# NOTE: causes deadlock
+			# elif e.args[0]==2006:
+			# 	# mysql has gone away
+			# 	self.connect()
+			# 	return self.sql(query=query, values=values,
+			# 		as_dict=as_dict, as_list=as_list, formatted=formatted,
+			# 		debug=debug, ignore_ddl=ignore_ddl, as_utf8=as_utf8,
+			# 		auto_commit=auto_commit, update=update)
+
 			else:
 				raise
 
@@ -368,7 +381,8 @@ class Database:
 		"""Returns `get_value` with fieldname='*'"""
 		return self.get_value(doctype, filters, "*", as_dict=as_dict, cache=cache)
 
-	def get_value(self, doctype, filters=None, fieldname="name", ignore=None, as_dict=False, debug=False, cache=False):
+	def get_value(self, doctype, filters=None, fieldname="name", ignore=None, as_dict=False,
+		debug=False, cache=False):
 		"""Returns a document property or list of properties.
 
 		:param doctype: DocType name.
@@ -672,6 +686,14 @@ class Database:
 		"""Commit current transaction. Calls SQL `COMMIT`."""
 		self.sql("commit")
 		frappe.local.rollback_observers = []
+		self.flush_realtime_log()
+
+	def flush_realtime_log(self):
+		for args in frappe.local.realtime_log:
+			frappe.async.emit_via_redis(*args)
+
+		frappe.local.realtime_log = []
+
 
 	def rollback(self):
 		"""`ROLLBACK` current transaction."""
@@ -774,6 +796,11 @@ class Database:
 				frappe.db.commit()
 				frappe.db.sql("""alter table `tab%s`
 					add unique `%s`(%s)""" % (doctype, constraint_name, ", ".join(fields)))
+
+	def get_system_setting(self, key):
+		def _load_system_settings():
+			return self.get_singles_dict("System Settings")
+		return frappe.cache().get_value("system_settings", _load_system_settings).get(key)
 
 	def close(self):
 		"""Close database connection."""

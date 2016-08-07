@@ -110,6 +110,13 @@ def get_data():
 					"hide_count": True
 				},
 				{
+					"type": "doctype",
+					"name": "Bulk Update",
+					"label": _("Bulk Update"),
+					"description": _("Update many values at one time."),
+					"hide_count": True
+				},
+				{
 					"type": "page",
 					"name": "backups",
 					"label": _("Download Backups"),
@@ -136,6 +143,21 @@ def get_data():
 					"type": "doctype",
 					"name": "Standard Reply",
 					"description": _("Standard replies to common queries.")
+				},
+				{
+					"type": "doctype",
+					"name": "Newsletter",
+					"description": _("Newsletters to contacts, leads."),
+				},
+				{
+					"type": "doctype",
+					"name": "Email Group",
+					"description": _("Email Group List"),
+				},
+				{
+					"type": "doctype",
+					"name": "Email Group Member",
+					"description": _("Email Group Member List"),
 				},
 			]
 		},
@@ -220,6 +242,12 @@ def get_data():
 					"type": "doctype",
 					"name": "Custom Field",
 					"description": _("Add fields to forms.")
+				},
+				{
+					"type": "doctype",
+					"label": _("Custom Translations"),
+					"name": "Translation",
+					"description": _("Add your own translations")
 				},
 				{
 					"type": "doctype",

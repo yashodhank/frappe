@@ -3,7 +3,7 @@
 
 from __future__ import unicode_literals
 
-import frappe, os
+import frappe, os, re
 from frappe.utils import touch_file, encode, cstr
 
 def make_boilerplate(dest, app_name):
@@ -11,10 +11,13 @@ def make_boilerplate(dest, app_name):
 		print "Destination directory does not exist"
 		return
 
+	# app_name should be in snake_case
+	app_name = frappe.scrub(app_name)
+
 	hooks = frappe._dict()
 	hooks.app_name = app_name
 	app_title = hooks.app_name.replace("_", " ").title()
-	for key in ("App Title (defaut: {0})".format(app_title),
+	for key in ("App Title (default: {0})".format(app_title),
 		"App Description", "App Publisher", "App Email",
 		"App Icon (default 'octicon octicon-file-directory')",
 		"App Color (default 'grey')",
@@ -23,10 +26,8 @@ def make_boilerplate(dest, app_name):
 		hook_val = None
 		while not hook_val:
 			hook_val = cstr(raw_input(key + ": "))
-			if hook_key=="app_name" and hook_val.lower().replace(" ", "_") != hook_val:
-				print "App Name must be all lowercase and without spaces"
-				hook_val = ""
-			elif not hook_val:
+
+			if not hook_val:
 				defaults = {
 					"app_title": app_title,
 					"app_icon": "octicon octicon-file-directory",
@@ -35,6 +36,13 @@ def make_boilerplate(dest, app_name):
 				}
 				if hook_key in defaults:
 					hook_val = defaults[hook_key]
+
+			if hook_key=="app_name" and hook_val.lower().replace(" ", "_") != hook_val:
+				print "App Name must be all lowercase and without spaces"
+  				hook_val = ""
+			elif hook_key=="app_title" and not re.match("^(?![\W])[^\d_\s][\w -]+$", hook_val, re.UNICODE):
+				print "App Title should start with a letter and it can only consist of letters, numbers, spaces and underscores"
+				hook_val = ""
 
 		hooks[hook_key] = hook_val
 
@@ -50,13 +58,14 @@ def make_boilerplate(dest, app_name):
 		"includes"))
 	frappe.create_folder(os.path.join(dest, hooks.app_name, hooks.app_name, "config"), with_init=True)
 
-	touch_file(os.path.join(dest, hooks.app_name, hooks.app_name, "__init__.py"))
+	with open(os.path.join(dest, hooks.app_name, hooks.app_name, "__init__.py"), "w") as f:
+		f.write(encode(init_template))
 
 	with open(os.path.join(dest, hooks.app_name, "MANIFEST.in"), "w") as f:
 		f.write(encode(manifest_template.format(**hooks)))
 
 	with open(os.path.join(dest, hooks.app_name, ".gitignore"), "w") as f:
-		f.write(encode(gitignore_template))
+		f.write(encode(gitignore_template.format(app_name = hooks.app_name)))
 
 	with open(os.path.join(dest, hooks.app_name, "setup.py"), "w") as f:
 		f.write(encode(setup_template.format(**hooks)))
@@ -107,8 +116,16 @@ recursive-include {app_name} *.svg
 recursive-include {app_name} *.txt
 recursive-exclude {app_name} *.pyc"""
 
+init_template = """# -*- coding: utf-8 -*-
+from __future__ import unicode_literals
+
+__version__ = '0.0.1'
+
+"""
+
 hooks_template = """# -*- coding: utf-8 -*-
 from __future__ import unicode_literals
+from . import __version__ as app_version
 
 app_name = "{app_name}"
 app_title = "{app_title}"
@@ -117,7 +134,6 @@ app_description = "{app_description}"
 app_icon = "{app_icon}"
 app_color = "{app_color}"
 app_email = "{app_email}"
-app_version = "0.0.1"
 app_license = "{app_license}"
 
 # Includes in <head>
@@ -141,6 +157,9 @@ app_license = "{app_license}"
 # role_home_page = {{
 #	"Role": "home_page"
 # }}
+
+# Website user home page (by function)
+# get_website_user_home_page = "{app_name}.utils.get_home_page"
 
 # Generators
 # ----------
@@ -224,32 +243,42 @@ from __future__ import unicode_literals
 from frappe import _
 
 def get_data():
-	return {{
-		"{app_title}": {{
+	return [
+		{{
+			"module_name": "{app_title}",
 			"color": "{app_color}",
 			"icon": "{app_icon}",
 			"type": "module",
 			"label": _("{app_title}")
 		}}
-	}}
+	]
 """
 
 setup_template = """# -*- coding: utf-8 -*-
 from setuptools import setup, find_packages
-import os
+from pip.req import parse_requirements
+import re, ast
 
-version = '0.0.1'
+# get version from __version__ variable in {app_name}/__init__.py
+_version_re = re.compile(r'__version__\s+=\s+(.*)')
+
+with open('{app_name}/__init__.py', 'rb') as f:
+    version = str(ast.literal_eval(_version_re.search(
+        f.read().decode('utf-8')).group(1)))
+
+requirements = parse_requirements("requirements.txt", session="")
 
 setup(
-    name='{app_name}',
-    version=version,
-    description='{app_description}',
-    author='{app_publisher}',
-    author_email='{app_email}',
-    packages=find_packages(),
-    zip_safe=False,
-    include_package_data=True,
-    install_requires=("frappe",),
+	name='{app_name}',
+	version=version,
+	description='{app_description}',
+	author='{app_publisher}',
+	author_email='{app_email}',
+	packages=find_packages(),
+	zip_safe=False,
+	include_package_data=True,
+	install_requires=[str(ir.req) for ir in requirements],
+	dependency_links=[str(ir._link) for ir in requirements if ir._link]
 )
 """
 
@@ -257,7 +286,8 @@ gitignore_template = """.DS_Store
 *.pyc
 *.egg-info
 *.swp
-tags"""
+tags
+{app_name}/docs/current"""
 
 docs_template = '''"""
 Configuration for docs

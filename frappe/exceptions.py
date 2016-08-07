@@ -59,3 +59,6 @@ class InvalidEmailAddressError(ValidationError): pass
 class TemplateNotFoundError(ValidationError): pass
 class UniqueValidationError(ValidationError): pass
 class AppNotInstalledError(ValidationError): pass
+class IncorrectSitePath(NotFound): pass
+class ImplicitCommitError(ValidationError): pass
+class RetryBackgroundJobError(Exception): pass

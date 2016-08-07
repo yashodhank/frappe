@@ -6,6 +6,7 @@ from __future__ import unicode_literals
 import frappe
 import json
 from frappe.model import no_value_fields
+from frappe.utils.password import rename_password_field
 
 def rename_field(doctype, old_fieldname, new_fieldname):
 	"""This functions assumes that doctype is already synced"""
@@ -33,6 +34,10 @@ def rename_field(doctype, old_fieldname, new_fieldname):
 
 		update_reports(doctype, old_fieldname, new_fieldname)
 		update_users_report_view_settings(doctype, old_fieldname, new_fieldname)
+
+		if new_field.fieldtype == "Password":
+			rename_password_field(doctype, old_fieldname, new_fieldname)
+
 
 	# update in property setter
 	update_property_setters(doctype, old_fieldname, new_fieldname)
@@ -118,16 +123,5 @@ def update_property_setters(doctype, old_fieldname, new_fieldname):
 	frappe.db.sql("""update `tabProperty Setter` set field_name = %s
 		where doc_type=%s and field_name=%s""", (new_fieldname, doctype, old_fieldname))
 
-	idx_property = frappe.db.sql("""select name, value from `tabProperty Setter` 
-		where doc_type='%s' and property = '_idx' and value like '%%%s%%'""" % 
-		(doctype, old_fieldname), as_dict=1)
-	
-	if idx_property:
-		idx_property_value = json.loads(idx_property[0].value)
-		for field in idx_property_value:
-			if field == old_fieldname:
-				field = new_fieldname
-				break
-			
-		frappe.db.set_value("Property Setter", idx_property[0].name, "value", json.dumps(idx_property_value))
-	
+	frappe.db.sql('''update `tabCustom Field` set insert_after=%s
+		where insert_after=%s and dt=%s''', (new_fieldname, old_fieldname, doctype))

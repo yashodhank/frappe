@@ -20,12 +20,12 @@ to ERPNext.
 Frappe Framework was designed to build [ERPNext](https://erpnext.com), open source
 ERP for managing small and medium sized businesses.
 
-[Get started with the Tutorial](https://frappe.github.io/frappe/user/tutorial)
+[Get started with the Tutorial](https://frappe.github.io/frappe/user/)
 """
-docs_version = "6.x.x"
+docs_version = "7.x.x"
 
 def get_context(context):
 	context.top_bar_items = [
 		{"label": "Developer Tutorials", "url": context.docs_base_url + "/user", "right": 1},
-		{"label": "Documentation", "url": context.docs_base_url + "/current", "right": 1}
+		{"label": "API Documentation", "url": context.docs_base_url + "/current", "right": 1}
 	]

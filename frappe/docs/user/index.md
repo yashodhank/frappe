@@ -1,3 +1,6 @@
-# Develop Apps with Frappe
+# Frappe Developer Tutorial
 
-{index}
+Select your language
+
+1. [English](en)
+1. [Français](fr)

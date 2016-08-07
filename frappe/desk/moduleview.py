@@ -5,6 +5,7 @@ from __future__ import unicode_literals
 import frappe
 from frappe import _
 from frappe.boot import get_allowed_pages
+from frappe.desk.doctype.desktop_icon.desktop_icon import set_hidden, clear_desktop_icons_cache
 
 @frappe.whitelist()
 def get(module):
@@ -17,6 +18,11 @@ def get(module):
 	}
 
 	return out
+
+@frappe.whitelist()
+def hide_module(module):
+	set_hidden(module, frappe.session.user, 1)
+	clear_desktop_icons_cache()
 
 def get_data(module):
 	"""Get module data for the module view `desk/#Module/[name]`"""
@@ -34,7 +40,7 @@ def get_data(module):
 	data = combine_common_sections(data)
 	data = apply_permissions(data)
 
-	set_last_modified(data)
+	#set_last_modified(data)
 
 	return data
 
@@ -208,7 +214,7 @@ def get_last_modified(doctype):
 def get_report_list(module, is_standard="No"):
 	"""Returns list on new style reports for modules."""
 	reports =  frappe.get_list("Report", fields=["name", "ref_doctype", "report_type"], filters=
-		{"is_standard": is_standard, "disabled": ("in", ("0", "NULL", "")), "module": module},
+		{"is_standard": is_standard, "disabled": 0, "module": module},
 		order_by="name")
 
 	out = []

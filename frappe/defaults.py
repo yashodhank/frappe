@@ -42,7 +42,7 @@ def get_user_default_as_list(key, user=None):
 		else:
 			d = user_defaults.get(frappe.scrub(key), None)
 
-	return (not isinstance(d, (list, tuple))) and [d] or d
+	return filter(None, (not isinstance(d, (list, tuple))) and [d] or d)
 
 def is_a_user_permission_key(key):
 	return ":" not in key and key != frappe.scrub(key)
@@ -75,7 +75,8 @@ def get_defaults(user=None):
 		user = frappe.session.user if frappe.session else "Guest"
 
 	if user:
-		userd = get_defaults_for(user)
+		userd = {}
+		userd.update(get_defaults_for(user))
 		userd.update({"user": user, "owner": user})
 		globald.update(userd)
 
@@ -171,6 +172,7 @@ def clear_default(key=None, value=None, parent=None, name=None, parenttype=None)
 def get_defaults_for(parent="__default"):
 	"""get all defaults"""
 	defaults = frappe.cache().hget("defaults", parent)
+
 	if defaults==None:
 		# sort descending because first default must get precedence
 		res = frappe.db.sql("""select defkey, defvalue from `tabDefaultValue`

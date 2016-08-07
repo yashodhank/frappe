@@ -6,7 +6,7 @@ import frappe, re, os
 
 def delete_page_cache(path):
 	cache = frappe.cache()
-	groups = ("website_page", "sitemap_options")
+	groups = ("website_page", "page_context")
 	if path:
 		for name in groups:
 			cache.hdel(name, path)
@@ -26,24 +26,34 @@ def can_cache(no_cache=False):
 
 def get_comment_list(doctype, name):
 	return frappe.db.sql("""select
-		comment, comment_by_fullname, creation, comment_by
-		from `tabComment` where comment_doctype=%s
-		and ifnull(comment_type, "Comment")="Comment"
-		and comment_docname=%s order by creation""", (doctype, name), as_dict=1) or []
+		content, sender_full_name, creation, sender
+		from `tabCommunication`
+		where
+			communication_type='Comment'
+			and reference_doctype=%s
+			and reference_name=%s
+			and (comment_type is null or comment_type in ('Comment', 'Communication'))
+			and modified >= DATE_SUB(NOW(),INTERVAL 1 YEAR)
+		order by creation""", (doctype, name), as_dict=1) or []
 
 def get_home_page():
 	if frappe.local.flags.home_page:
 		return frappe.local.flags.home_page
 
 	def _get_home_page():
-		role_home_page = frappe.get_hooks("role_home_page")
 		home_page = None
 
-		if role_home_page:
-			for role in frappe.get_roles():
-				if role in role_home_page:
-					home_page = role_home_page[role][-1]
-					break
+		get_website_user_home_page = frappe.get_hooks('get_website_user_home_page')
+		if get_website_user_home_page:
+			home_page = frappe.get_attr(get_website_user_home_page[-1])(frappe.session.user)
+
+		if not home_page:
+			role_home_page = frappe.get_hooks("role_home_page")
+			if role_home_page:
+				for role in frappe.get_roles():
+					if role in role_home_page:
+						home_page = role_home_page[role][-1]
+						break
 
 		if not home_page:
 			home_page = frappe.get_hooks("home_page")
@@ -52,6 +62,8 @@ def get_home_page():
 
 		if not home_page:
 			home_page = frappe.db.get_value("Website Settings", None, "home_page") or "login"
+
+		home_page = home_page.strip('/')
 
 		return home_page
 
@@ -80,7 +92,7 @@ def cleanup_page_name(title):
 	# replace repeating hyphens
 	name = re.sub(r"(-)\1+", r"\1", name)
 
-	return name
+	return name[:140]
 
 
 def get_shade(color, percent):
@@ -170,29 +182,35 @@ def abs_url(path):
 		path = "/" + path
 	return path
 
-def get_full_index(route=None, doctype="Web Page", extn = False):
-	"""Returns full index of the website (on Web Page) upto the n-th level"""
-	all_routes = []
+def get_full_index(route=None, extn = False):
+	"""Returns full index of the website for www upto the n-th level"""
+	if not frappe.local.flags.children_map:
+		from frappe.website.router import get_pages
+		children_map = {}
+		pages = get_pages()
 
-	def get_children(parent):
-		children = frappe.db.get_all(doctype, ["parent_website_route", "page_name", "title", "template_path"],
-			{"parent_website_route": parent}, order_by="idx asc")
-		for d in children:
-			d.url = abs_url(os.path.join(d.parent_website_route or "", d.page_name))
-			if d.url not in all_routes:
-				d.children = get_children(d.url.lstrip("/"))
-				all_routes.append(d.url)
+		# make children map
+		for route, page_info in pages.iteritems():
+			parent_route = os.path.dirname(route)
+			children_map.setdefault(parent_route, []).append(page_info)
 
-			if extn and os.path.basename(d.template_path).split(".")[0] != "index":
-				d.url = d.url + ".html"
+		# order as per index if present
+		for route, children in children_map.items():
+			page_info = pages[route]
+			if page_info.index:
+				new_children = []
+				for name in page_info.index:
+					child_route = page_info.route + '/' + name
+					if child_route in pages:
+						new_children.append(pages[child_route])
 
-		# no index.html for home page
-		# home should not be in table of contents
-		if not parent:
-			children = [d for d in children if d.page_name not in ("index.html", "index",
-				"", "contents")]
+				# add remaining pages not in index.txt
+				for c in children:
+					if c not in new_children:
+						new_children.append(c)
 
-		return children
+				children_map[route] = new_children
 
-	return get_children(route or "")
+		frappe.local.flags.children_map = children_map
 
+	return frappe.local.flags.children_map
